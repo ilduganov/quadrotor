@@ -139,8 +139,14 @@ SIGNAL(TWI_vect)
 	}
 }
 
+unsigned short current = 0;
 SIGNAL(ADC_vect)
 {
+	if ((ADMUX & 0x0F) == 0x06)
+	{
+		current = ADC;
+		// if current > max_current then stop
+	}
 }
 
 SIGNAL(TIMER2_OVF_vect)
@@ -211,42 +217,55 @@ void pulse(unsigned char t)
 
 volatile unsigned char w = 1;
 
+void init_analog(void)
+{
+	ADMUX = 0xF0;
+	ADCSRA = 0;
+	ADCSRB = (1 << ACME);
+	ACSR = (1 << ACIE) | 0x03;
+}
+
 SIGNAL(ANALOG_COMP_vect)
 {
-	unsigned int time = stop_timer();
+	unsigned int time = 0;
 	unsigned char pos = 0;
 	unsigned char neg = 0;
-	clr_p(0x07);
-	clr_n(0x07);
-	if ((ADMUX & 0x07) == 0x00)
+	if ((ADMUX & 0x0F) == 0x00)
 	{
 		pos = 0x01;
 		neg = 0x02;
-		ADMUX = (ADMUX & ~0x07) | 0x01;
+		ADMUX = (ADMUX & ~0x0F) | 0x02;
 	}
-	else if ((ADMUX & 0x07) == 0x01)
+	else if ((ADMUX & 0x0F) == 0x02)
 	{
 		pos = 0x04;
 		neg = 0x01;
-		ADMUX = (ADMUX & ~0x07) | 0x02;
+		ADMUX = (ADMUX & ~0x0F) | 0x01;
 	}
-	else if ((ADMUX & 0x07) == 0x02)
+	else if ((ADMUX & 0x0F) == 0x01)
 	{
 		pos = 0x02;
 		neg = 0x04;
-		ADMUX = (ADMUX & ~0x07) | 0x00;
+		ADMUX = (ADMUX & ~0x0F) | 0x00;
 	}
+	else
+	{
+		return;
+	}
+	time = stop_timer();
+	clr_p(0x07);
+	clr_n(0x07);
 	if ((ACSR & 0x03) == 0x03)
 	{
 		ACSR = 0x02;
-		set_p(pos);
-		set_n(neg);
+		set_p(neg);
+		set_n(pos);
 	}
 	else if ((ACSR & 0x03) == 0x02)
 	{
 		ACSR = 0x03;
-		set_p(neg);
-		set_n(pos);
+		set_p(pos);
+		set_n(neg);
 	}
 	i = 1;
 	t[0] = time;
@@ -267,7 +286,7 @@ SIGNAL(ANALOG_COMP_vect)
 		pulse(100 + delta);
 	}
 */
-	pulse(90);
+	pulse(200);
 	start_timer();
 }
 
@@ -284,14 +303,6 @@ void init_timer2(void)
 	TIMSK2 = (1 << OCIE2B) | (1 << OCIE2A) | (1 << TOIE2);
 }
 
-void init_ac(void)
-{
-	ADMUX = 0xF0;
-	ADCSRA = 0;
-	ADCSRB = (1 << ACME);
-	ACSR = (1 << ACIE) | 0x03;
-}
-
 int main(void)
 {
 
@@ -301,7 +312,7 @@ int main(void)
 	init_ports();
 	init_timer1();
 	init_timer2();
-	init_ac();
+	init_analog();
 
 	set_timer(3000);
 

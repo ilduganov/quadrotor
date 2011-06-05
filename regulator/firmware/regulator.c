@@ -10,6 +10,7 @@
 volatile char b = 0;
 volatile char c = 0;
 volatile char phase = 0;
+volatile char state = 0;
 volatile int ref_speed = 0;
 
 // NEVER EVER TRY TO ACCESS PORTS DIRECTLY OR YOUR MOSFETs WILL EXPLODE!!!
@@ -23,9 +24,18 @@ void init_ports(void)
 	DIDR0 = 0x07;
 }
 
-void set_led(char on)
+void set_led(void)
 {
-	if (on == 0)
+	PORTD |= 0x04;
+}
+
+void clr_led(void)
+{
+	PORTD &= ~0x04;
+}
+void toggle_led(void)
+{
+	if (PORTD & 0x04)
 		PORTD &= ~0x04;
 	else
 		PORTD |= 0x04;
@@ -83,11 +93,11 @@ void set_n(unsigned char m)
 	PORTB |= (u << 0) | (v << 1) | (w << 2);
 }
 
-volatile unsigned char i;
-volatile unsigned char j;
+volatile unsigned char i = 0;
+volatile unsigned char j = 0;
 volatile int l = 0;
 volatile char h = 0;
-unsigned short t[100];
+unsigned short i2c[100];
 
 SIGNAL(TWI_vect)
 {
@@ -114,12 +124,12 @@ SIGNAL(TWI_vect)
 	case 0xB8:
 		if (h == 0)
 		{
-			TWDR = t[j] & 0x00FF;
+			TWDR = i2c[j] & 0x00FF;
 			h = 1;
 		}
 		else
 		{
-			TWDR = (t[j] >> 8) & 0x00FF;
+			TWDR = (i2c[j] >> 8) & 0x00FF;
 			j++;
 			h = 0;
 		}
@@ -137,6 +147,14 @@ SIGNAL(TWI_vect)
 		TWCR = (1 << TWEN) | (1 << TWIE) | (1 << TWINT) | (1 << TWEA);
 		break;
 	}
+}
+
+void init_analog(void)
+{
+	ADMUX = 0x00;
+	ADCSRA = 0;
+	ADCSRB = (1 << ACME);
+	ACSR = (1 << ACIE) | 0x03;
 }
 
 unsigned short current = 0;
@@ -163,46 +181,62 @@ SIGNAL(TIMER2_COMPB_vect)
 {
 }
 
-volatile int cent = 0;
-
-SIGNAL(TIMER1_OVF_vect)
+void switch_phase(void)
 {
-	cent++;
-}
-
-SIGNAL(TIMER1_COMPA_vect)
-{
-}
-
-SIGNAL(TIMER1_COMPB_vect)
-{
-	ACSR &= ~(1 << ACD);
-	ACSR |= (1 << ACIE);
-}
-
-void start_timer(void)
-{
-	TCNT1 = 0;
-	cent = 0;
-}
-
-unsigned int stop_timer(void)
-{
-	if (cent > 0)
-		return 0;
-	return TCNT1;
-}
-
-void set_timer(unsigned int t)
-{
-	OCR1B = t;
+	switch(phase)
+	{
+	case 0:
+		ADMUX = 0x02;
+		ACSR = (ACSR & ~0x03) | 0x03;
+		clr_p(0x04);
+		set_p(0x01);
+		phase = 1;
+		break;
+	case 1:
+		ADMUX = 0x01;
+		ACSR = (ACSR & ~0x03) | 0x02;
+		clr_n(0x02);
+		set_n(0x04);
+		phase = 2;
+		break;
+	case 2:
+		ADMUX = 0x00;
+		ACSR = (ACSR & ~0x03) | 0x03;
+		clr_p(0x01);
+		set_p(0x02);
+		phase = 3;
+		break;
+	case 3:
+		ADMUX = 0x02;
+		ACSR = (ACSR & ~0x03) | 0x02;
+		clr_n(0x04);
+		set_n(0x01);
+		phase = 4;
+		break;
+	case 4:
+		ADMUX = 0x01;
+		ACSR = (ACSR & ~0x03) | 0x03;
+		clr_p(0x02);
+		set_p(0x04);
+		phase = 5;
+		break;
+	case 5:
+		ADMUX = 0x00;
+		ACSR = (ACSR & ~0x03) | 0x02;
+		clr_n(0x01);
+		set_n(0x02);
+		phase = 0;
+		break;
+	default:
+		break;
+	}
 }
 
 void pulse(unsigned char t)
 {
-	TCNT2 = 0;
 	OCR2A = 0xFF;
-	OCR2B = t;
+	OCR2B = t-1;
+	TCNT2 = 0xFF;
 	if (t > 0)
 	{
 		TCCR2A = (1 << COM2B1) |  (1 << WGM21) | (1 << WGM20);
@@ -212,89 +246,107 @@ void pulse(unsigned char t)
 		TCCR2A = (0 << COM2B1) |  (1 << WGM21) | (1 << WGM20);
 	}
 	TCCR2B = (1 << WGM22) | 0x01;
+	// TODO measure current
 }
 
-volatile unsigned char w = 1;
+volatile int cent = 0;
 
-void init_analog(void)
+SIGNAL(TIMER1_OVF_vect)
 {
-	ADMUX = 0x00;
-	ADCSRA = 0;
-	ADCSRB = (1 << ACME);
-	ACSR = (1 << ACIE) | 0x03;
+	cent++;
 }
 
-SIGNAL(ANALOG_COMP_vect)
+unsigned int time()
 {
-	unsigned int time = 0;
-	unsigned char pos = 0;
-	unsigned char neg = 0;
-	switch(phase)
+	if (cent > 0)
+		return 0;
+	return TCNT1;
+}
+
+unsigned char bad_cycles = 0;
+
+SIGNAL(TIMER1_COMPA_vect)
+{
+	set_led();
+	switch(state)
 	{
-	case 0:
-		ADMUX = 0x02;
-		ACSR = (1 << ACD) | 0x03;
-		clr_p(0x04);
-		set_p(0x01);
-		phase = 1;
-		set_led(1);
-		break;
 	case 1:
-		ADMUX = 0x01;
-		ACSR = (1 << ACD) | 0x02;
-		clr_n(0x02);
-		set_n(0x04);
-		phase = 2;
-		set_led(0);
-		break;
-	case 2:
-		ADMUX = 0x00;
-		ACSR = (1 << ACD) | 0x03;
-		clr_p(0x01);
-		set_p(0x02);
-		phase = 3;
-		set_led(1);
-		break;
-	case 3:
-		ADMUX = 0x02;
-		ACSR = (1 << ACD) | 0x02;
-		clr_n(0x04);
-		set_n(0x01);
-		phase = 4;
-		set_led(0);
+		switch_phase();
+		state = 2;
+		TCNT1 = 0;
+		cent = 0;
+		OCR1B = 10;
+		if (bad_cycles > 0)
+		{
+			bad_cycles--;
+		}
 		break;
 	case 4:
-		ADMUX = 0x01;
-		ACSR = (1 << ACD) | 0x03;
-		clr_p(0x02);
-		set_p(0x04);
-		phase = 5;
-		set_led(1);
-		break;
-	case 5:
-		ADMUX = 0x00;
-		ACSR = (1 << ACD) | 0x02;
-		clr_n(0x01);
-		set_n(0x02);
-		phase = 0;
-		set_led(0);
+		if (bad_cycles < 2)
+		{
+			switch_phase();
+			state = 2;
+			TCNT1 = 0;
+			cent = 0;
+			OCR1B = 10;
+			bad_cycles++;
+		}
 		break;
 	default:
 		break;
 	}
-	time = stop_timer();
-	i = 1;
-	t[0] = time;
-	pulse(1);
-	start_timer();
+	clr_led();
+}
+
+unsigned short timeout = 100;
+
+SIGNAL(TIMER1_COMPB_vect)
+{
+	switch(state)
+	{
+	case 2: // generate pulse
+		pulse(2);
+		state = 3;
+		OCR1B = TCNT1 + 10;
+		break;
+	case 3: // enable analog comparator
+		ACSR &= ~(1 << ACD);
+		state = 4;
+//		OCR1B = OCR1A - 100;
+		break;
+	case 4: // disable analog comparator
+//		ACSR |= 1 << ACD;
+//		state = 5;
+		break;
+	default:
+		break;
+	}
+}
+
+SIGNAL(ANALOG_COMP_vect)
+{
+	unsigned int t = time();
+	ACSR |= 1 << ACD;
+	switch(state)
+	{
+	case 4:
+		i = 1;
+		i2c[0] = t;
+		state = 1;
+		OCR1A = t + 1150;
+		break;
+	default:
+		break;
+	}
 }
 
 void init_timer1(void)
 {
-	TCCR1A = 0;
-	TCCR1B = 1;
-	TCCR1C = 0;
+	TCCR1A = 0x00;
+	TCCR1B = 0x01;
+	TCCR1C = 0x00;
 	TIMSK1 = (1 << TOIE1) | (1 << OCIE1A) | (1 << OCIE1B);
+	OCR1A = 0xFFFF;
 }
 
 void init_timer2(void)
@@ -305,21 +357,20 @@ void init_timer2(void)
 int main(void)
 {
 
-//	CLKPR = 0x80;
-//	CLKPR = 0x03;
+	CLKPR = 0x80;
+	CLKPR = 0x00;
 
 	init_ports();
 	init_timer1();
 	init_timer2();
 	init_analog();
 
-	set_timer(100);
-
 	TWAR = 1 << 1;
 	TWCR = 0x45;
 	TWCR = (1 << TWEN) | (1 << TWIE) | (1 << TWEA);
 
 	sei();
+	state = 4;
 	while (1)
 	{
      		_delay_ms(1000);

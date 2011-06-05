@@ -161,8 +161,6 @@ SIGNAL(TIMER2_COMPA_vect)
 
 SIGNAL(TIMER2_COMPB_vect)
 {
-	clr_n(0x07);
-	clr_p(0x07);
 }
 
 volatile int cent = 0;
@@ -174,11 +172,12 @@ SIGNAL(TIMER1_OVF_vect)
 
 SIGNAL(TIMER1_COMPA_vect)
 {
-	ACSR |= (1 << ACIE);
 }
 
 SIGNAL(TIMER1_COMPB_vect)
 {
+	ACSR &= ~(1 << ACD);
+	ACSR |= (1 << ACIE);
 }
 
 void start_timer(void)
@@ -196,7 +195,7 @@ unsigned int stop_timer(void)
 
 void set_timer(unsigned int t)
 {
-	OCR1A = t;
+	OCR1B = t;
 }
 
 void pulse(unsigned char t)
@@ -219,7 +218,7 @@ volatile unsigned char w = 1;
 
 void init_analog(void)
 {
-	ADMUX = 0xF0;
+	ADMUX = 0x00;
 	ADCSRA = 0;
 	ADCSRB = (1 << ACME);
 	ACSR = (1 << ACIE) | 0x03;
@@ -230,63 +229,63 @@ SIGNAL(ANALOG_COMP_vect)
 	unsigned int time = 0;
 	unsigned char pos = 0;
 	unsigned char neg = 0;
-	if ((ADMUX & 0x0F) == 0x00)
+	switch(phase)
 	{
-		pos = 0x01;
-		neg = 0x02;
-		ADMUX = (ADMUX & ~0x0F) | 0x02;
-	}
-	else if ((ADMUX & 0x0F) == 0x02)
-	{
-		pos = 0x04;
-		neg = 0x01;
-		ADMUX = (ADMUX & ~0x0F) | 0x01;
-	}
-	else if ((ADMUX & 0x0F) == 0x01)
-	{
-		pos = 0x02;
-		neg = 0x04;
-		ADMUX = (ADMUX & ~0x0F) | 0x00;
-	}
-	else
-	{
-		return;
+	case 0:
+		ADMUX = 0x02;
+		ACSR = (1 << ACD) | 0x03;
+		clr_p(0x04);
+		set_p(0x01);
+		phase = 1;
+		set_led(1);
+		break;
+	case 1:
+		ADMUX = 0x01;
+		ACSR = (1 << ACD) | 0x02;
+		clr_n(0x02);
+		set_n(0x04);
+		phase = 2;
+		set_led(0);
+		break;
+	case 2:
+		ADMUX = 0x00;
+		ACSR = (1 << ACD) | 0x03;
+		clr_p(0x01);
+		set_p(0x02);
+		phase = 3;
+		set_led(1);
+		break;
+	case 3:
+		ADMUX = 0x02;
+		ACSR = (1 << ACD) | 0x02;
+		clr_n(0x04);
+		set_n(0x01);
+		phase = 4;
+		set_led(0);
+		break;
+	case 4:
+		ADMUX = 0x01;
+		ACSR = (1 << ACD) | 0x03;
+		clr_p(0x02);
+		set_p(0x04);
+		phase = 5;
+		set_led(1);
+		break;
+	case 5:
+		ADMUX = 0x00;
+		ACSR = (1 << ACD) | 0x02;
+		clr_n(0x01);
+		set_n(0x02);
+		phase = 0;
+		set_led(0);
+		break;
+	default:
+		break;
 	}
 	time = stop_timer();
-	clr_p(0x07);
-	clr_n(0x07);
-	if ((ACSR & 0x03) == 0x03)
-	{
-		ACSR = 0x02;
-		set_p(neg);
-		set_n(pos);
-	}
-	else if ((ACSR & 0x03) == 0x02)
-	{
-		ACSR = 0x03;
-		set_p(pos);
-		set_n(neg);
-	}
 	i = 1;
 	t[0] = time;
-	if (time < 4000)
-		set_led(1);
-	else
-		set_led(0);
-/*
-	int delta = t - 10000;
-	if (delta < 0)
-	{
-		if (delta < -100) delta = -100;
-		pulse(100 + delta);
-	}
-	else
-	{
-		if (delta > 100) delta = 100;
-		pulse(100 + delta);
-	}
-*/
-	pulse(200);
+	pulse(1);
 	start_timer();
 }
 
@@ -295,7 +294,7 @@ void init_timer1(void)
 	TCCR1A = 0;
 	TCCR1B = 1;
 	TCCR1C = 0;
-	TIMSK1 = (1 << TOIE1) | (1 << OCIE1A) | (1 << OCIE1A);
+	TIMSK1 = (1 << TOIE1) | (1 << OCIE1A) | (1 << OCIE1B);
 }
 
 void init_timer2(void)
@@ -306,15 +305,15 @@ void init_timer2(void)
 int main(void)
 {
 
-	CLKPR = 0x80;
-	CLKPR = 0x00;
+//	CLKPR = 0x80;
+//	CLKPR = 0x03;
 
 	init_ports();
 	init_timer1();
 	init_timer2();
 	init_analog();
 
-	set_timer(3000);
+	set_timer(100);
 
 	TWAR = 1 << 1;
 	TWCR = 0x45;

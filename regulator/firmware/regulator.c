@@ -19,7 +19,7 @@ enum
 	WAIT_ZCROSS = 4,
 	WAIT_ZCROSS2 = 5
 }  state = 0;
-volatile int ref_speed = 0;
+volatile int ref_speed = 2000;
 
 // NEVER EVER TRY TO ACCESS PORTS DIRECTLY OR YOUR MOSFETs WILL EXPLODE!!!
 
@@ -101,7 +101,7 @@ void set_n(unsigned char m)
 	PORTB |= (u << 0) | (v << 1) | (w << 2);
 }
 
-volatile unsigned char i = 0;
+volatile unsigned char i = 3;
 volatile unsigned char j = 0;
 volatile int l = 0;
 volatile char h = 0;
@@ -119,7 +119,7 @@ SIGNAL(TWI_vect)
 		ch = TWDR;
 		if (ch < 10)
 		{
-			ref_speed = 1000*ch;
+			ref_speed = 100*ch;
 		}
 		TWCR = (1 << TWEN) | (1 << TWIE) | (1 << TWINT) | (1 << TWEA);
 		break;
@@ -238,6 +238,7 @@ void pulse(unsigned char t)
 		TCCR2A = (0 << COM2B1) |  (1 << WGM21) | (1 << WGM20);
 	}
 	TCCR2B = (1 << WGM22) | 0x01;
+	i2c[1] = (unsigned short)t;
 }
 
 volatile int cent = 0;
@@ -269,18 +270,15 @@ void measure_current()
 	ADMUX = 0xC6;
 	ACSR |= 1 << ACD;
 	ADCSRA |= (1 << ADEN) | (1 << ADSC);
-	set_led();
 }
 
 SIGNAL(ADC_vect)
 {
-	clr_led();
 	switch(state)
 	{
 	case 3:
 		current = ADC;
-		i2c[0] = current;
-		i = 1;
+		i2c[2] = current;
 		state = 4;
 		OCR1B = TCNT1 + 10;
 		break;
@@ -296,6 +294,7 @@ SIGNAL(TIMER1_COMPA_vect)
 	switch(state)
 	{
 	case 1:
+		set_led();
 		switch_phase();
 		state = 2;
 		TCNT1 = 0;
@@ -307,6 +306,7 @@ SIGNAL(TIMER1_COMPA_vect)
 		}
 		break;
 	case 5:
+		clr_led();
 		if (bad_cycles < 2)
 		{
 			switch_phase();
@@ -323,6 +323,7 @@ SIGNAL(TIMER1_COMPA_vect)
 }
 
 unsigned short timeout = 100;
+unsigned char power = 2;
 
 SIGNAL(TIMER1_COMPB_vect)
 {
@@ -331,7 +332,7 @@ SIGNAL(TIMER1_COMPB_vect)
 	case 1: // wait for start
 		break;
 	case 2: // generate pulse
-		pulse(2);
+		pulse(power);
 		state = 3;
 		measure_current();
 		break;
@@ -360,11 +361,16 @@ SIGNAL(ANALOG_COMP_vect)
 	{
 	case 5:
 		state = 1;
-		OCR1A = t + 1150;
+		OCR1A = t + t/2;
+		if (t < ref_speed && power > 0)
+			power--;
+		else if (t > ref_speed && power < 10)
+			power++;
 		break;
 	default:
 		break;
 	}
+	i2c[0] = t;
 }
 
 void init_timer1(void)

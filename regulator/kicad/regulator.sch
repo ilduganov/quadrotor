@@ -1,4 +1,4 @@
-EESchema Schematic File Version 2  date Mon 25 Oct 2010 08:42:17 PM NOVST
+EESchema Schematic File Version 2  date Tue 07 Jun 2011 10:43:18 AM NOVST
 LIBS:power
 LIBS:device
 LIBS:transistors
@@ -29,19 +29,16 @@ LIBS:opto
 LIBS:atmel
 LIBS:contrib
 LIBS:valves
-LIBS:atmega8
-LIBS:irf
-LIBS:irf-2
-LIBS:transistor-power
-LIBS:ctrl-cache
-EELAYER 24  0
+LIBS:regulator-cache
+EELAYER 25  0
 EELAYER END
 $Descr A4 11700 8267
+encoding utf-8
 Sheet 1 1
-Title ""
+Title "Regulator for Brushless DC motor"
 Date "24 oct 2010"
-Rev ""
-Comp ""
+Rev "1.0"
+Comp "Copyright (C) Nikolay Ilduganov 2011"
 Comment1 ""
 Comment2 ""
 Comment3 ""

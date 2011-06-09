@@ -16,10 +16,13 @@ enum
 	AFTER_ZCROSS = 1,
 	AFTER_SWITCH = 2,
 	WAIT_ADC = 3,
-	WAIT_ZCROSS = 4,
-	WAIT_ZCROSS2 = 5
-}  state = 0;
-volatile int ref_speed = 2000;
+	PAUSE = 4,
+	WAIT_ZCROSS = 5
+}  state = NONE;
+
+volatile unsigned int ref_speed = 2000;
+volatile unsigned char power_limit = 150;
+unsigned int speed = 0;
 
 // NEVER EVER TRY TO ACCESS PORTS DIRECTLY OR YOUR MOSFETs WILL EXPLODE!!!
 
@@ -27,7 +30,7 @@ void init_ports(void)
 {
 	DDRB = 0x07;
 	PORTB = 0x00;
-	DDRD = 0xBC; // 10111100
+	DDRD = 0xB4; // 10110100
 	PORTD = 0x00;
 	DIDR0 = 0x07;
 }
@@ -159,12 +162,12 @@ SIGNAL(TWI_vect)
 
 SIGNAL(TIMER2_OVF_vect)
 {
-	TCCR2B = (1 << WGM22);
-	TCCR2A = (0 << COM2B1) |  (1 << WGM21) | (1 << WGM20);
 }
 
 SIGNAL(TIMER2_COMPA_vect)
 {
+	TCCR2A = (0 << COM2B1) | (0 << COM2B0) | (1 << WGM21) | (1 << WGM20);
+	TCCR2B = (0 << WGM22);
 }
 
 SIGNAL(TIMER2_COMPB_vect)
@@ -226,19 +229,14 @@ void switch_phase(void)
 
 void pulse(unsigned char t)
 {
-	OCR2A = 0xFF;
-	OCR2B = t-1;
-	TCNT2 = 0xFF;
 	if (t > 0)
 	{
-		TCCR2A = (1 << COM2B1) |  (1 << WGM21) | (1 << WGM20);
+		OCR2B = t-1;
+		TCNT2 = 0xFF;
+		TCCR2A = (1 << COM2B1) | (0 << COM2B0) | (1 << WGM21) | (1 << WGM20);
+		TCCR2B = (0 << WGM22) | 0x02;
+		i2c[1] = t;
 	}
-	else
-	{
-		TCCR2A = (0 << COM2B1) |  (1 << WGM21) | (1 << WGM20);
-	}
-	TCCR2B = (1 << WGM22) | 0x01;
-	i2c[1] = (unsigned short)t;
 }
 
 volatile int cent = 0;
@@ -276,10 +274,10 @@ SIGNAL(ADC_vect)
 {
 	switch(state)
 	{
-	case 3:
+	case WAIT_ADC:
 		current = ADC;
 		i2c[2] = current;
-		state = 4;
+		state = PAUSE;
 		OCR1B = TCNT1 + 10;
 		break;
 	default:
@@ -287,16 +285,19 @@ SIGNAL(ADC_vect)
 	}
 }
 
+unsigned short timeout = 100;
+unsigned char power = 1;
+
 unsigned char bad_cycles = 0;
 
 SIGNAL(TIMER1_COMPA_vect)
 {
 	switch(state)
 	{
-	case 1:
-		set_led();
+	case AFTER_ZCROSS:
+		clr_led();
 		switch_phase();
-		state = 2;
+		state = AFTER_SWITCH;
 		TCNT1 = 0;
 		cent = 0;
 		OCR1B = 10;
@@ -305,16 +306,20 @@ SIGNAL(TIMER1_COMPA_vect)
 			bad_cycles--;
 		}
 		break;
-	case 5:
-		clr_led();
+	case WAIT_ZCROSS:
+		set_led();
 		if (bad_cycles < 2)
 		{
 			switch_phase();
-			state = 2;
+			state = AFTER_SWITCH;
 			TCNT1 = 0;
 			cent = 0;
 			OCR1B = 10;
 			bad_cycles++;
+		}
+		else if (power > 0)
+		{
+			power--;
 		}
 		break;
 	default:
@@ -322,30 +327,26 @@ SIGNAL(TIMER1_COMPA_vect)
 	}
 }
 
-unsigned short timeout = 100;
-unsigned char power = 2;
-
 SIGNAL(TIMER1_COMPB_vect)
 {
 	switch(state)
 	{
-	case 1: // wait for start
+	case AFTER_ZCROSS: // wait for start
 		break;
-	case 2: // generate pulse
+	case AFTER_SWITCH: // generate pulse
 		pulse(power);
-		state = 3;
+		state = WAIT_ADC;
 		measure_current();
 		break;
-	case 3: // wait ADC result
+	case WAIT_ADC: // wait ADC result
 		break;
-	case 4: // enable analog comparator
+	case PAUSE: // enable analog comparator
 		ADCSRA &= ~(1 << ADEN);
 		ADMUX = sense;
 		ACSR &= ~(1 << ACD);
-		state = 5;
-//		OCR1B = OCR1A - 100;
+		state = WAIT_ZCROSS;
 		break;
-	case 5: // wait zero-cross
+	case WAIT_ZCROSS: // wait zero-cross
 		break;
 	default:
 		break;
@@ -359,18 +360,34 @@ SIGNAL(ANALOG_COMP_vect)
 	ADCSRA |= 1 << ADEN;
 	switch(state)
 	{
-	case 5:
-		state = 1;
-		OCR1A = t + t/2;
-		if (t < ref_speed && power > 0)
-			power--;
-		else if (t > ref_speed && power < 10)
-			power++;
+	case WAIT_ZCROSS:
+		state = AFTER_ZCROSS;
+		if (t > ref_speed - 1000) // startup
+		{
+			OCR1A = t + 1000;
+			if (power < power_limit)
+				power++;
+		}
+		else if (t > ref_speed/2) // too slow
+		{
+			OCR1A = ref_speed;
+			if (power < power_limit)
+				power++;
+		}
+		else if (t < ref_speed/2) // too fast
+		{
+			OCR1A = t + t;
+			if (power > 0)
+				power--;
+		}
+
 		break;
 	default:
 		break;
 	}
-	i2c[0] = t;
+	speed = (speed * 7) + OCR1A;
+	speed /= 8;
+	i2c[0] = speed;
 }
 
 void init_timer1(void)
@@ -384,7 +401,11 @@ void init_timer1(void)
 
 void init_timer2(void)
 {
-	TIMSK2 = (1 << OCIE2B) | (1 << OCIE2A) | (1 << TOIE2);
+	OCR2A = 200;
+	TCCR2A = (0 << COM2B1) | (0 << COM2B0) | (1 << WGM21) | (1 << WGM20);
+	TCCR2B = (0 << WGM22);
+	TIMSK2 = (1 << TOIE2) | (1 << OCIE2B) | (1 << OCIE2A);
+	DDRD |= 0x08;
 }
 
 int main(void)
@@ -403,7 +424,7 @@ int main(void)
 	TWCR = (1 << TWEN) | (1 << TWIE) | (1 << TWEA);
 
 	sei();
-	state = 5;
+	state = WAIT_ZCROSS;
 	while (1)
 	{
      		_delay_ms(1000);

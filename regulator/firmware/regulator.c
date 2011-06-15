@@ -2,7 +2,6 @@
 	Copyright (C) 2011 Nikolay Ilduganov
 */
 
-#define F_CPU 8000000UL
 #include <avr/io.h>
 #include <avr/interrupt.h>
 #include <util/delay.h>
@@ -17,7 +16,8 @@ enum
 	AFTER_SWITCH = 2,
 	WAIT_ADC = 3,
 	PAUSE = 4,
-	WAIT_ZCROSS = 5
+	WAIT_ZCROSS = 5,
+	TEST = 6
 }  state = NONE;
 
 volatile unsigned int ref_speed = 2000;
@@ -52,7 +52,7 @@ void toggle_led(void)
 		PORTD |= 0x04;
 }
 
-void clr_p(unsigned char m)
+void clr_h(unsigned char m)
 {
 	char u = 0, v = 0, w = 0;
 	if (m & 0x01)
@@ -65,7 +65,7 @@ void clr_p(unsigned char m)
 	DDRD |= (u << 7) | (v << 5) | (w << 4);
 }
 
-void clr_n(unsigned char m)
+void clr_l(unsigned char m)
 {
 	char u = 0, v = 0, w = 0;
 	if (m & 0x01)
@@ -77,9 +77,9 @@ void clr_n(unsigned char m)
 	PORTB &= ~((u << 0) | (v << 1) | (w << 2));
 }
 
-void set_p(unsigned char m)
+void set_h(unsigned char m)
 {
-	clr_n(m);
+	clr_l(m);
 	char u = 0, v = 0, w = 0;
 	if (m & 0x01)
 		u = 1;
@@ -91,9 +91,9 @@ void set_p(unsigned char m)
 	DDRD &= ~((u << 7) | (v << 5) | (w << 4));
 }
 
-void set_n(unsigned char m)
+void set_l(unsigned char m)
 {
-	clr_p(m);
+	clr_h(m);
 	char u = 0, v = 0, w = 0;
 	if (m & 0x01)
 		u = 1;
@@ -108,7 +108,7 @@ volatile unsigned char i = 3;
 volatile unsigned char j = 0;
 volatile int l = 0;
 volatile char h = 0;
-unsigned short i2c[100];
+volatile unsigned short i2c[100];
 
 SIGNAL(TWI_vect)
 {
@@ -144,14 +144,14 @@ SIGNAL(TWI_vect)
 			j++;
 			h = 0;
 		}
-		if (j == i)
+		if (j < i)
 		{
-			b = 0;
-			TWCR = (1 << TWEN) | (1 << TWIE) | (1 << TWINT);
+			TWCR = (1 << TWEN) | (1 << TWIE) | (1 << TWINT) | (1 << TWEA);
 		}
 		else
 		{
-			TWCR = (1 << TWEN) | (1 << TWIE) | (1 << TWINT) | (1 << TWEA);
+			b = 0;
+			TWCR = (1 << TWEN) | (1 << TWIE) | (1 << TWINT);
 		}
 		break;
 	default:
@@ -168,13 +168,17 @@ SIGNAL(TIMER2_COMPA_vect)
 {
 	TCCR2A = (0 << COM2B1) | (0 << COM2B0) | (1 << WGM21) | (1 << WGM20);
 	TCCR2B = (0 << WGM22);
+	clr_h(0x07);
+	clr_l(0x07);
 }
 
 SIGNAL(TIMER2_COMPB_vect)
 {
 }
 
-unsigned char sense = 0;
+volatile unsigned char sense = 0;
+volatile unsigned char hi = 0;
+volatile unsigned char lo = 0;
 
 void switch_phase(void)
 {
@@ -183,54 +187,69 @@ void switch_phase(void)
 	case 0:
 		sense = 0xC2;
 		ACSR = (ACSR & ~0x03) | 0x03;
-		clr_p(0x04);
-		set_p(0x01);
+		clr_h(0x04);
+		set_h(0x01);
+		hi = 0x01;
+		lo = 0x02;
 		phase = 1;
 		break;
 	case 1:
 		sense = 0xC1;
 		ACSR = (ACSR & ~0x03) | 0x02;
-		clr_n(0x02);
-		set_n(0x04);
+		clr_l(0x02);
+		set_l(0x04);
+		hi = 0x01;
+		lo = 0x04;
 		phase = 2;
 		break;
 	case 2:
 		sense = 0xC0;
 		ACSR = (ACSR & ~0x03) | 0x03;
-		clr_p(0x01);
-		set_p(0x02);
+		clr_h(0x01);
+		set_h(0x02);
+		hi = 0x02;
+		lo = 0x04;
 		phase = 3;
 		break;
 	case 3:
 		sense = 0xC2;
 		ACSR = (ACSR & ~0x03) | 0x02;
-		clr_n(0x04);
-		set_n(0x01);
+		clr_l(0x04);
+		set_l(0x01);
+		hi = 0x02;
+		lo = 0x01;
 		phase = 4;
 		break;
 	case 4:
 		sense = 0xC1;
 		ACSR = (ACSR & ~0x03) | 0x03;
-		clr_p(0x02);
-		set_p(0x04);
+		clr_h(0x02);
+		set_h(0x04);
+		hi = 0x04;
+		lo = 0x01;
 		phase = 5;
 		break;
 	case 5:
 		sense = 0xC0;
 		ACSR = (ACSR & ~0x03) | 0x02;
-		clr_n(0x01);
-		set_n(0x02);
+		clr_l(0x01);
+		set_l(0x02);
+		hi = 0x04;
+		lo = 0x02;
 		phase = 0;
 		break;
 	default:
 		break;
 	}
+	i2c[2] = phase;
 }
 
 void pulse(unsigned char t)
 {
 	if (t > 0)
 	{
+		set_h(hi);
+		set_l(lo);
 		OCR2B = t-1;
 		TCNT2 = 0xFF;
 		TCCR2A = (1 << COM2B1) | (0 << COM2B0) | (1 << WGM21) | (1 << WGM20);
@@ -246,7 +265,7 @@ SIGNAL(TIMER1_OVF_vect)
 	cent++;
 }
 
-unsigned int time()
+unsigned int time(void)
 {
 	if (cent > 0)
 		return 0;
@@ -256,18 +275,19 @@ unsigned int time()
 void init_analog(void)
 {
 	ADMUX = (1 << REFS1) | (1 << REFS0);
-	ADCSRA = (1 << ADIE);
+	ADCSRA = (1 << ADIE) | 0x02;
 	ADCSRB = (1 << ACME);
 	ACSR = (1 << ACIE) | 0x03;
 }
 
 unsigned short current = 0;
 
-void measure_current()
+void measure_current(void)
 {
 	ADMUX = 0xC6;
 	ACSR |= 1 << ACD;
-	ADCSRA |= (1 << ADEN) | (1 << ADSC);
+	ADCSRA |= (1 << ADEN) | (1 << ADSC) | (1 << ADATE);
+	i = 3;
 }
 
 SIGNAL(ADC_vect)
@@ -276,11 +296,22 @@ SIGNAL(ADC_vect)
 	{
 	case WAIT_ADC:
 		current = ADC;
-		i2c[2] = current;
+		i2c[3] = current;
+		i = 4;
 		state = PAUSE;
 		OCR1B = TCNT1 + 10;
 		break;
 	default:
+		current = ADC;
+		if (i < 20)
+		{
+			i2c[i] = current;
+			i++;
+		}
+		else
+		{
+			ADCSRA &= ~(1 << ADATE);
+		}
 		break;
 	}
 }
@@ -322,6 +353,12 @@ SIGNAL(TIMER1_COMPA_vect)
 			power--;
 		}
 		break;
+	case TEST:
+		switch_phase();
+		TCNT1 = 0;
+		cent = 0;
+		pulse(100);
+		measure_current();
 	default:
 		break;
 	}
@@ -424,7 +461,8 @@ int main(void)
 	TWCR = (1 << TWEN) | (1 << TWIE) | (1 << TWEA);
 
 	sei();
-	state = WAIT_ZCROSS;
+	//state = WAIT_ZCROSS;
+	state = TEST;
 	while (1)
 	{
      		_delay_ms(1000);

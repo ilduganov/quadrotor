@@ -123,7 +123,7 @@ SIGNAL(TWI_vect)
 	// case 0x90: // <General call; >ACK; <Data (<DATA; >(N)ACK)
 	// case 0x98: // <General call; >NACK; <Data (N/A)
 	case 0xA0: // STOP or repeated START while slave (N/A)
-		if (i2c_slave_receive)
+		if (i2c_slave_receive && i > 0)
 			i2c_slave_receive(buffer, i);
 		TWCR = (1 << TWEN) | (1 << TWIE) | (1 << TWINT) | (1 << TWEA);
 		break;

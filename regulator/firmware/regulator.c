@@ -44,6 +44,7 @@ void clr_led(void)
 {
 	PORTD &= ~0x04;
 }
+
 void toggle_led(void)
 {
 	if (PORTD & 0x04)
@@ -104,11 +105,9 @@ void set_l(unsigned char m)
 	PORTB |= (u << 0) | (v << 1) | (w << 2);
 }
 
-volatile unsigned char i = 3;
+volatile unsigned char i = 10;
 volatile unsigned char j = 0;
-volatile int l = 0;
-volatile char h = 0;
-volatile unsigned short i2c[100];
+volatile char i2c[100] = "regulator";
 
 SIGNAL(TWI_vect)
 {
@@ -127,23 +126,14 @@ SIGNAL(TWI_vect)
 		TWCR = (1 << TWEN) | (1 << TWIE) | (1 << TWINT) | (1 << TWEA);
 		break;
 	case 0xA8:
-		TWDR = i;
 		j = 0;
-		h = 0;
+		TWDR = i2c[j];
+		j++;
 		TWCR = (1 << TWEN) | (1 << TWIE) | (1 << TWINT) | (1 << TWEA);
 		break;
 	case 0xB8:
-		if (h == 0)
-		{
-			TWDR = i2c[j] & 0x00FF;
-			h = 1;
-		}
-		else
-		{
-			TWDR = (i2c[j] >> 8) & 0x00FF;
-			j++;
-			h = 0;
-		}
+		TWDR = i2c[j];
+		j++;
 		if (j < i)
 		{
 			TWCR = (1 << TWEN) | (1 << TWIE) | (1 << TWINT) | (1 << TWEA);
@@ -241,7 +231,7 @@ void switch_phase(void)
 	default:
 		break;
 	}
-	i2c[2] = phase;
+	//i2c[2] = phase;
 }
 
 void pulse(unsigned char t)
@@ -254,7 +244,7 @@ void pulse(unsigned char t)
 		TCNT2 = 0xFF;
 		TCCR2A = (1 << COM2B1) | (0 << COM2B0) | (1 << WGM21) | (1 << WGM20);
 		TCCR2B = (0 << WGM22) | 0x02;
-		i2c[1] = t;
+		//i2c[1] = t;
 	}
 }
 
@@ -287,7 +277,6 @@ void measure_current(void)
 	ADMUX = 0xC6;
 	ACSR |= 1 << ACD;
 	ADCSRA |= (1 << ADEN) | (1 << ADSC) | (1 << ADATE);
-	i = 3;
 }
 
 SIGNAL(ADC_vect)
@@ -296,8 +285,7 @@ SIGNAL(ADC_vect)
 	{
 	case WAIT_ADC:
 		current = ADC;
-		i2c[3] = current;
-		i = 4;
+		//i2c[3] = current;
 		state = PAUSE;
 		OCR1B = TCNT1 + 10;
 		break;
@@ -305,7 +293,7 @@ SIGNAL(ADC_vect)
 		current = ADC;
 		if (i < 20)
 		{
-			i2c[i] = current;
+			//i2c[i] = current;
 			i++;
 		}
 		else
@@ -326,7 +314,7 @@ SIGNAL(TIMER1_COMPA_vect)
 	switch(state)
 	{
 	case AFTER_ZCROSS:
-		clr_led();
+		//clr_led();
 		switch_phase();
 		state = AFTER_SWITCH;
 		TCNT1 = 0;
@@ -338,7 +326,7 @@ SIGNAL(TIMER1_COMPA_vect)
 		}
 		break;
 	case WAIT_ZCROSS:
-		set_led();
+		//set_led();
 		if (bad_cycles < 2)
 		{
 			switch_phase();
@@ -424,7 +412,7 @@ SIGNAL(ANALOG_COMP_vect)
 	}
 	speed = (speed * 7) + OCR1A;
 	speed /= 8;
-	i2c[0] = speed;
+	//i2c[0] = speed;
 }
 
 void init_timer1(void)
@@ -445,9 +433,10 @@ void init_timer2(void)
 	DDRD |= 0x08;
 }
 
+static void (*boot_main)(void) = 0x1800;
+
 int main(void)
 {
-
 	CLKPR = 0x80;
 	CLKPR = 0x00;
 
@@ -461,11 +450,15 @@ int main(void)
 	TWCR = (1 << TWEN) | (1 << TWIE) | (1 << TWEA);
 
 	sei();
-	//state = WAIT_ZCROSS;
-	state = TEST;
+	state = WAIT_ZCROSS;
+	//state = TEST;
 	while (1)
 	{
-     		_delay_ms(1000);
+     		_delay_ms(10000);
      	}
+	clr_led();
+	cli();
+
+	boot_main();
 }
 

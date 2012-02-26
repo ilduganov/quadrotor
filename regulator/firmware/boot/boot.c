@@ -28,25 +28,6 @@ volatile uint8_t page_buffer[SPM_PAGESIZE];
 #define page_offset(addr) ((addr) & (SPM_PAGESIZE - 1))
 #define page_start(addr) ((addr) & ~(SPM_PAGESIZE - 1))
 
-void init_ports(void)
-{
-	DDRB = 0x07;
-	PORTB = 0x00;
-	DDRD = 0xB4; // 10110100
-	PORTD = 0x00;
-	DIDR0 = 0x07;
-}
-
-void set_led(void)
-{
-	PORTD |= 0x04;
-}
-
-void clr_led(void)
-{
-	PORTD &= ~0x04;
-}
-
 void read_page(uint16_t address)
 {
 	boot_rww_enable_safe();
@@ -83,6 +64,7 @@ unsigned char transmit(volatile unsigned char *buffer, unsigned char size)
 	if (state != READ)
 		return 0;
 	int i;
+	write_page();
 	boot_rww_enable_safe();
 	for (i = 0; i < 16; i++)
 	{
@@ -153,8 +135,6 @@ int main(void)
 
 	MCUCR = (1<<IVCE);
 	MCUCR = (1<<IVSEL);
-
-	init_ports();	
 
 	i2c_slave_transmit = transmit;
 	i2c_slave_receive = receive;
